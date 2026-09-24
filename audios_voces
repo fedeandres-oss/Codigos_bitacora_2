@@ -1,0 +1,130 @@
+import os
+import librosa
+import numpy as np
+from scipy.signal import find_peaks
+import matplotlib.pyplot as plt
+
+# ---------- 0. Ruta y mapeo de archivos exactos ----------
+RUTA_DRIVE = '/content/drive/MyDrive/senales/audios'
+
+INSTRUMENTOS = {
+    "media_frecuencia": {
+        "archivo": "audio_daniela.ogg",
+        "label": "audio de daniela",
+        "desc": "media frecuencia"
+    },
+    "alta_frecuencia": {
+        "archivo": "audio_samuel.ogg",
+        "label": "audio_samuel",
+        "desc": "alta frecuencia"
+    },
+    "frecuencia_baja": {
+        "archivo": "audio_fede.ogg",
+        "label": "audio_fede.",
+        "desc": "baja frecuencia"
+    },
+}
+
+T_INICIO = 0.0  # segundo donde empieza el segmento analizado
+T_DUR = 3.0     # duración del segmento (3 segundos)
+
+resultados = {}
+
+# ---------- 1. Cargar audio y extraer segmento de 3s ----------
+for key, info in INSTRUMENTOS.items():
+    ruta_archivo = os.path.join(RUTA_DRIVE, info["archivo"])
+
+    if os.path.exists(ruta_archivo):
+        data, sr = librosa.load(ruta_archivo, sr=22050, mono=True, offset=T_INICIO, duration=T_DUR)
+        data = data.astype(np.float64)
+
+        max_abs = np.max(np.abs(data))
+        if max_abs > 0:
+            data = data / max_abs
+
+        segmento = data
+        t = np.arange(len(segmento)) / sr
+
+        resultados[key] = {
+            "label": info["label"],
+            "desc": info["desc"],
+            "sr": sr,
+            "segmento": segmento,
+            "t": t
+        }
+    else:
+        print(f"⚠️ Advertencia: No se encontró el archivo '{ruta_archivo}'")
+
+# ---------- 2. Media y desviación estándar ----------
+print("=" * 70)
+print("ESTADÍSTICOS DESCRIPTIVOS (segmento de 3s, amplitud normalizada)")
+print("=" * 70)
+for key, r in resultados.items():
+    seg = r["segmento"]
+    r["media"] = np.mean(seg)
+    r["std"] = np.std(seg)
+    print(f"{r['label']:35s} | media={r['media']:+.5f} | std={r['std']:.5f}")
+
+# ---------- 3. FFT ----------
+print("\n" + "=" * 70)
+print("FFT - Frecuencia dominante y picos principales")
+print("=" * 70)
+for key, r in resultados.items():
+    seg = r["segmento"]
+    sr = r["sr"]
+    N = len(seg)
+    ventana = np.hanning(N)
+    seg_vent = seg * ventana
+    fft_vals = np.fft.rfft(seg_vent)
+    freqs = np.fft.rfftfreq(N, d=1 / sr)
+    mag = np.abs(fft_vals)
+    mag_norm = mag / np.max(mag)
+    r["freqs"] = freqs
+    r["mag"] = mag_norm
+    idx_dom = np.argmax(mag_norm)
+    r["f_dom"] = freqs[idx_dom]
+    peaks, props = find_peaks(mag_norm, height=0.05, distance=20)
+    orden = np.argsort(props["peak_heights"])[::-1][:5]
+    r["top_peaks"] = sorted(freqs[peaks][orden])
+    print(f"{r['label']:35s} | f_dominante={r['f_dom']:8.1f} Hz | picos principales: "
+          + ", ".join(f"{p:.0f}Hz" for p in r["top_peaks"]))
+
+# ---------- 4. Gráficas en Cuadrícula 3x2 ----------
+colores = ["#2563eb", "#dc2626", "#16a34a"]
+
+# Crear figura de 3 filas x 2 columnas
+fig, axes = plt.subplots(nrows=3, ncols=2, figsize=(12, 8))
+
+for i, (key, r) in enumerate(resultados.items()):
+    ax_wave = axes[i, 0]
+    ax_fft = axes[i, 1]
+
+    # --- Columna Izquierda: Forma de onda ---
+    ax_wave.plot(r["t"], r["segmento"], color=colores[i], linewidth=0.6)
+    ax_wave.set_title(f"Forma de Onda (3s) - {r['label']} ({r['desc']})", fontsize=11)
+    ax_wave.set_xlabel("Tiempo (s)")
+    ax_wave.set_ylabel("Amplitud")
+    ax_wave.axhline(r["media"], color="black", linestyle="--", linewidth=0.8,
+                    label=f"media={r['media']:.4f}")
+    ax_wave.legend(fontsize=8, loc="upper right")
+    ax_wave.set_xlim(0, T_DUR)
+    ax_wave.grid(True, linestyle="--", alpha=0.5)
+
+    # --- Columna Derecha: Espectro FFT ---
+    mask = r["freqs"] <= 5000  # Mostrar hasta 5000 Hz según la imagen
+    ax_fft.plot(r["freqs"][mask], r["mag"][mask], color=colores[i], linewidth=0.8)
+    ax_fft.set_title(f"Espectro FFT - {r['label']} ({r['desc']})", fontsize=11)
+    ax_fft.set_xlabel("Frecuencia (Hz)")
+    ax_fft.set_ylabel("Magnitud normalizada")
+    ax_fft.axvline(r["f_dom"], color="black", linestyle="--", linewidth=0.8,
+                   label=f"f_dom={r['f_dom']:.0f}Hz")
+    ax_fft.legend(fontsize=8, loc="upper right")
+    ax_fft.grid(True, linestyle="--", alpha=0.5)
+
+# Título global en el pie de la figura
+fig.suptitle("Figure 16: Waveform + FFT for musical instrument audio", 
+             fontsize=16, fontweight="bold", y=0.01)
+
+plt.tight_layout()
+plt.subplots_adjust(bottom=0.08)  # Dejar espacio para el pie de figura
+plt.show()
